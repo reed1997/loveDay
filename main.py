@@ -1,11 +1,11 @@
 import random
-from time import localtime
+from time import time, localtime
+import cityinfo
 from requests import get, post
 from datetime import datetime, date
 from zhdate import ZhDate
 import sys
 import os
-import requests
  
  
 def get_color():
@@ -32,26 +32,36 @@ def get_access_token():
     return access_token
  
  
-def get_weather(region):
+def get_weather(province, city):
+    # 城市id
+    try:
+        city_id = cityinfo.cityInfo[province][city]["AREAID"]
+    except KeyError:
+        print("推送消息失败，请检查省份或城市是否正确")
+        os.system("pause")
+        sys.exit(1)
+    # city_id = 101280101
+    # 毫秒级时间戳
+    t = (int(round(time() * 1000)))
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2987.113 Safari/537.36'
+        "Referer": "http://www.weather.com.cn/weather1d/{}.shtml".format(city_id),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36'
     }
-    key = config["weather_key"]
-    region_url = "https://free-api.heweather.com/s6/weather/forecast?location={}&key={}".format(region, key)
-    response = get(region_url, headers=headers).json()
-    print(response)
-
-    # 获取地区的location--id
-    location_id = response['HeWeather6'][0]["basic"]["cid"]
-    weather_url = "https://free-api.heweather.com/s6/weather/forecast?location={}&key={}".format(location_id, key)
-    response = get(weather_url, headers=headers).json()
-    # 天气帅达版
-    weather = response['HeWeather6'][0]["daily_forecast"][0]["cond_txt_d"]+'至'+response['HeWeather6'][0]["daily_forecast"][0]["cond_txt_n"]
-    # 当前温度
-    temp = response['HeWeather6'][0]["daily_forecast"][0]["tmp_max"]+ u"\N{DEGREE SIGN}" + "C"
-    # 风向
-    wind_dir = response['HeWeather6'][0]["daily_forecast"][0]["wind_dir"]
-    return weather, temp, wind_dir
+    url = "http://d1.weather.com.cn/dingzhi/{}.html?_={}".format(city_id, t)
+    response = get(url, headers=headers)
+    response.encoding = "utf-8"
+    response_data = response.text.split(";")[0].split("=")[-1]
+    response_json = eval(response_data)
+    # print(response_json)
+    weatherinfo = response_json["weatherinfo"]
+    # 天气
+    weather = weatherinfo["weather"]
+    # 最高气温
+    temp = weatherinfo["temp"]
+    # 最低气温
+    tempn = weatherinfo["tempn"]
+    return weather, temp, tempn
  
  
 def get_birthday(birthday, year, today):
@@ -60,17 +70,10 @@ def get_birthday(birthday, year, today):
     if birthday_year[0] == "r":
         r_mouth = int(birthday.split("-")[1])
         r_day = int(birthday.split("-")[2])
-        # 获取农历生日的今年对应的月和日
-        try:
-            birthday = ZhDate(year, r_mouth, r_day).to_datetime().date()
-        except TypeError:
-            print("请检查生日的日子是否在今年存在")
-            os.system("pause")
-            sys.exit(1)
-        birthday_month = birthday.month
-        birthday_day = birthday.day
         # 今年生日
-        year_date = date(year, birthday_month, birthday_day)
+        birthday = ZhDate(year, r_mouth, r_day).to_datetime().date()
+        year_date = birthday
+ 
  
     else:
         # 获取国历生日的今年对应月和日
@@ -108,7 +111,7 @@ def get_ciba():
     return note_ch, note_en
  
  
-def send_message(to_user, access_token, region_name, weather, temp, wind_dir, note_ch, note_en):
+def send_message(to_user, access_token, city_name, weather, max_temperature, min_temperature, note_ch, note_en):
     url = "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}".format(access_token)
     week_list = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"]
     year = localtime().tm_year
@@ -138,20 +141,20 @@ def send_message(to_user, access_token, region_name, weather, temp, wind_dir, no
                 "value": "{} {}".format(today, week),
                 "color": get_color()
             },
-            "region": {
-                "value": region_name,
+            "city": {
+                "value": city_name,
                 "color": get_color()
             },
             "weather": {
                 "value": weather,
                 "color": get_color()
             },
-            "temp": {
-                "value": temp,
+            "min_temperature": {
+                "value": min_temperature,
                 "color": get_color()
             },
-            "wind_dir": {
-                "value": wind_dir,
+            "max_temperature": {
+                "value": max_temperature,
                 "color": get_color()
             },
             "love_day": {
@@ -212,15 +215,12 @@ if __name__ == "__main__":
     accessToken = get_access_token()
     # 接收的用户
     users = config["user"]
-    # 传入地区获取天气信息
-    region = config["region"]
-    weather, temp, wind_dir = get_weather(region)
-    note_ch = config["note_ch"]
-    note_en = config["note_en"]
-    if note_ch == "" and note_en == "":
-        # 获取词霸每日金句
-        note_ch, note_en = get_ciba()
+    # 传入省份和市获取天气信息
+    province, city = config["province"], config["city"]
+    weather, max_temperature, min_temperature = get_weather(province, city)
+    # 获取词霸每日金句
+    note_ch, note_en = get_ciba()
     # 公众号推送消息
     for user in users:
-        send_message(user, accessToken, region, weather, temp, wind_dir, note_ch, note_en)
+        send_message(user, accessToken, city, weather, max_temperature, min_temperature, note_ch, note_en)
     os.system("pause")
